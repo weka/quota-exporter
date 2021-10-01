@@ -1,0 +1,6 @@
+prometheus-client==0.11.0
+python-dateutil==2.8.2
+PyYAML==5.4.1
+six==1.16.0
+urllib3==1.26.7
+wekalib==1.3.7
