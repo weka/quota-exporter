@@ -128,6 +128,7 @@ class Collector(object):
 
     # returns a list of filesystem names
     def get_filesystems(self):
+        self.api_stats['num_calls'] += 1
         try:
             filesystems_cap = self.cluster.call_api(method="filesystems_get_capacity", parms={})
         except Exception as exc:
@@ -159,6 +160,7 @@ class Collector(object):
         start_time = time.time()
 
         while len(quotas) > 0 or first_time:
+            self.api_stats['num_calls'] += 1
             first_time = False
             this_call_start = time.time()
             try:
@@ -167,18 +169,19 @@ class Collector(object):
             except Exception as exc:
                 log.error(f"Error fetching more quotas for fs {fs_name}: {exc}")
                 return None
-            log.info(f"ET for api call: {time.time() - this_call_start}")
+            log.debug(f"ET for api call: {time.time() - this_call_start}")
             nextCookie = result['nextCookie']
             quotas = result['quotas']
             all_quotas.update(quotas)
-            log.info(f"number of quotas returned is {len(quotas)}")
+            log.debug(f"number of quotas returned is {len(quotas)}")
             #all_quotas += quotas
 
-        log.info(f"ET for filesystem '{fs_name}': {time.time() - start_time}; total quotas is {len(all_quotas)}")
+        log.debug(f"ET for filesystem '{fs_name}': {time.time() - start_time}; total quotas is {len(all_quotas)}")
         return all_quotas
 
     def resolve_dirname(self, quota):
         start_time = time.time()
+        self.api_stats['num_calls'] += 1
         try:
             result = self.cluster.call_api(method='filesystem_resolve_inode',
                                            parms={'inodeContext': quota['inodeId'], 'snapViewId': quota['snapViewId']})
@@ -186,5 +189,5 @@ class Collector(object):
             log.error(f"Error resolving directory name: {exc}")
             return None
 
-        log.info(f"ET to resolve name: {time.time() - start_time}")
+        log.debug(f"ET to resolve name: {time.time() - start_time}")
         return result['path']

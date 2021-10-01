@@ -169,8 +169,6 @@ def configure_logging(logger, verbosity):
 
     # local modules
     logging.getLogger("collector").setLevel(loglevel)
-    logging.getLogger("lokilogs").setLevel(loglevel)
-    logging.getLogger("async_api").setLevel(loglevel)
 
 def main():
     signal_handling()
