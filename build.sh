@@ -1,4 +1,4 @@
-TOOL=export
+TOOL=quota-export
 pyinstaller --onefile ${TOOL}.py
 
 TARGET=tarball/$TOOL
