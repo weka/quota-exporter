@@ -9,9 +9,9 @@ RUN adduser --home $BASEDIR --uid $ID --disabled-password --gecos "Weka User" $U
 
 WORKDIR $BASEDIR
 
-COPY ./tarball/quota-export/equota-xport $BASEDIR
+COPY ./tarball/quota-export/quota-export $BASEDIR
 
-EXPOSE 8001
+EXPOSE 8101
 
 USER $USER
 ENTRYPOINT ["/weka/quota-export"]
