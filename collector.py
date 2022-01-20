@@ -119,9 +119,9 @@ class Collector(object):
                 if details['totalBytes'] > details['softLimitBytes']:
                     dirname = self.resolve_dirname(details)
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
-                                            str(round(details['softLimitBytes']/1024/1024,1)),
-                                            str(round(details['hardLimitBytes']/1024/1024,1))],
-                                            str(round(details['totalBytes']/1024/1024,1)) )
+                                            str(round(details['softLimitBytes']/1000/1000/1000,1)),
+                                            str(round(details['hardLimitBytes']/1000/1000/1000,1))],
+                                            str(round(details['totalBytes']/1000/1000/1000,1)) )
 
         return quota_gauge
 
