@@ -106,7 +106,7 @@ class Collector(object):
                                                 "owner",
                                                 "soft_quotaGB",
                                                 "hard_quotaGB",
-                                                "available"])
+                                                "availableGB"])
 
         # we have to ask for quotas for each FS individually, so get a list of filesystems
         filesystems = self.get_filesystems()
@@ -117,11 +117,13 @@ class Collector(object):
             for quota, details in quotas.items():
                 if details['totalBytes'] > details['softLimitBytes']:
                     dirname = self.resolve_dirname(details)
+                    available = round((details['hardLimitBytes'] - details['totalBytes']) / (1000 ^3), 1)
+                    if available < 0.0:
+                        available = 0.0
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
                                             str(round(details['hardLimitBytes']/1000/1000/1000,1)),
-                                            str(round((details['hardLimitBytes'] -
-                                                      details['totalBytes'])/1000/1000/1000,1))],
+                                            str(available)],
                                             str(round(details['totalBytes']/1000/1000/1000,1)) )
 
         return quota_gauge
