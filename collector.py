@@ -121,7 +121,7 @@ class Collector(object):
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
                                             str(round(details['hardLimitBytes']/1000/1000/1000,1)),
                                             str(round((details['hardLimitBytes'] -
-                                                      details['totalBytes']/1000/1000/1000),1))],
+                                                      details['totalBytes'])/1000/1000/1000,1))],
                                             str(round(details['totalBytes']/1000/1000/1000,1)) )
 
         return quota_gauge
