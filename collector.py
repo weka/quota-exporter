@@ -117,7 +117,7 @@ class Collector(object):
             for quota, details in quotas.items():
                 if details['totalBytes'] > details['softLimitBytes']:
                     dirname = self.resolve_dirname(details)
-                    available = round((details['hardLimitBytes'] - details['totalBytes']) / (1000 ^3), 1)
+                    available = round((details['hardLimitBytes'] - details['totalBytes']) / (1000 ** 3), 1)
                     if available < 0.0:
                         available = 0.0
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
