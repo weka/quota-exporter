@@ -19,8 +19,6 @@ class Collector(object):
         self._access_lock = Lock()
         self.gather_timestamp = None
         self.collect_time = None
-        self.clusterdata = {}
-        self.threaderror = False
         self.api_stats = {}
         self.backends_only = config['exporter']['backends_only']
 
@@ -107,7 +105,8 @@ class Collector(object):
                                                 "directory",
                                                 "owner",
                                                 "soft_quotaGB",
-                                                "hard_quotaGB"])
+                                                "hard_quotaGB",
+                                                "available"])
 
         # we have to ask for quotas for each FS individually, so get a list of filesystems
         filesystems = self.get_filesystems()
@@ -120,7 +119,9 @@ class Collector(object):
                     dirname = self.resolve_dirname(details)
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
-                                            str(round(details['hardLimitBytes']/1000/1000/1000,1))],
+                                            str(round(details['hardLimitBytes']/1000/1000/1000,1)),
+                                            str(round((details['hardLimitBytes'] -
+                                                      details['totalBytes']/1000/1000/1000),1))],
                                             str(round(details['totalBytes']/1000/1000/1000,1)) )
 
         return quota_gauge
@@ -143,21 +144,13 @@ class Collector(object):
         return fsnames
 
     def get_quotas(self, fs_name):
-        #try:
-        #    result = self.cluster.call_api(method='directory_quota_list', parms={"fs_name": fs_name, "start_cookie": 0})
-        #except Exception as exc:
-        #    log.error(f"Error fetching quotas for fs {fs_name}: {exc} {traceback.format_exc()}")
-        #    return None
-
-        #nextCookie = result['nextCookie']
-        #all_quotas = result['quotas']
-        #quotas = all_quotas
         first_time = True
         nextCookie = 0
         all_quotas = dict()
         quotas = dict()
         start_time = time.time()
 
+        # must handle the case where there are too many quotas to return in one call
         while len(quotas) > 0 or first_time:
             self.api_stats['num_calls'] += 1
             first_time = False
@@ -173,7 +166,6 @@ class Collector(object):
             quotas = result['quotas']
             all_quotas.update(quotas)
             log.debug(f"number of quotas returned is {len(quotas)}")
-            #all_quotas += quotas
 
         log.debug(f"ET for filesystem '{fs_name}': {time.time() - start_time}; total quotas is {len(all_quotas)}")
         return all_quotas
