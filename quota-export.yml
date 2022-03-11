@@ -3,6 +3,7 @@ exporter:
   listen_port: 8101
   timeout: 10.0
   backends_only: True
+  exceeded_only: True
 
 # cluster section - info about the weka cluster we want to export data from:
 cluster:

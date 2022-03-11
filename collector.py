@@ -23,6 +23,7 @@ class Collector(object):
         self.threaderror = False
         self.api_stats = {}
         self.backends_only = config['exporter']['backends_only']
+        self.exceeded_only = config['exporter']['exceeded_only']
 
         self.cluster = cluster_obj
 
@@ -116,7 +117,7 @@ class Collector(object):
         for fs in filesystems:
             quotas = self.get_quotas(fs)
             for quota, details in quotas.items():
-                if details['totalBytes'] > details['softLimitBytes']:
+                if not self.exceeded_only or (self.exceeded_only and details['totalBytes'] > details['softLimitBytes']):
                     dirname = self.resolve_dirname(details)
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
@@ -143,15 +144,6 @@ class Collector(object):
         return fsnames
 
     def get_quotas(self, fs_name):
-        #try:
-        #    result = self.cluster.call_api(method='directory_quota_list', parms={"fs_name": fs_name, "start_cookie": 0})
-        #except Exception as exc:
-        #    log.error(f"Error fetching quotas for fs {fs_name}: {exc} {traceback.format_exc()}")
-        #    return None
-
-        #nextCookie = result['nextCookie']
-        #all_quotas = result['quotas']
-        #quotas = all_quotas
         first_time = True
         nextCookie = 0
         all_quotas = dict()
@@ -173,7 +165,6 @@ class Collector(object):
             quotas = result['quotas']
             all_quotas.update(quotas)
             log.debug(f"number of quotas returned is {len(quotas)}")
-            #all_quotas += quotas
 
         log.debug(f"ET for filesystem '{fs_name}': {time.time() - start_time}; total quotas is {len(all_quotas)}")
         return all_quotas
