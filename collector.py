@@ -15,15 +15,14 @@ class Collector(object):
     def __init__(self, config, cluster_obj):  # wekaCollector
 
         # dynamic module globals
-        buckets = []  # same for everyone
         self._access_lock = Lock()
         self.gather_timestamp = None
         self.collect_time = None
         self.clusterdata = {}
         self.threaderror = False
         self.api_stats = {}
-        self.backends_only = config['exporter']['backends_only']
-        self.exceeded_only = config['exporter']['exceeded_only']
+        self.backends_only = config['exporter']['backends_only']    # calling routine verifies this is there
+        self.exceeded_only = config['exporter']['exceeded_only']    # calling routine verifies this is there
 
         self.cluster = cluster_obj
 

@@ -70,6 +70,9 @@ def prom_client(config):
     if 'backends_only' not in config['exporter']:
         config['exporter']['backends_only'] = True
 
+    if 'exceeded_only' not in config['exporter']:
+        config['exporter']['exceeded_only'] = True
+
     log.info(f"Timeout set to {config['exporter']['timeout']} secs")
 
     try:
