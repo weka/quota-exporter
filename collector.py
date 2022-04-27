@@ -118,6 +118,8 @@ class Collector(object):
             for quota, details in quotas.items():
                 if not self.exceeded_only or (self.exceeded_only and details['totalBytes'] > details['softLimitBytes']):
                     dirname = self.resolve_dirname(details)
+                    if details['owner'] is None:
+                        details['owner'] = ""   # prevent prom client from puking if it's None
                     quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
                                             str(round(details['hardLimitBytes']/1000/1000/1000,1))],
