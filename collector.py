@@ -55,6 +55,8 @@ class Collector(object):
             if should_gather:
                 log.info("gathering")
                 try:
+                    #for objs in self.gather():
+                    #    yield objs
                     quota_objs = self.gather()
                 except wekalib.exceptions.NameNotResolvable as exc:
                     log.critical(f"Unable to resolve names; terminating")
@@ -66,7 +68,8 @@ class Collector(object):
 
             # yield for each metric
             log.debug("Yielding metrics")
-            yield quota_objs
+            for i in quota_objs:
+                yield i
             log.debug("Yielding complete")
 
             # report time if we gathered, otherwise, it's meaningless
@@ -101,13 +104,41 @@ class Collector(object):
             return
 
         # value is the total bytes used
-        quota_gauge = GaugeMetricFamily("weka_quota", "Weka Directory Quota",
+        quota_gauge = GaugeMetricFamily("weka_quota", "Weka Directory Quota Summary",
                                         labels=["cluster",
                                                 "filesystem",
                                                 "directory",
                                                 "owner",
                                                 "soft_quotaGB",
                                                 "hard_quotaGB"])
+
+        # value is the soft quota
+        soft_gauge = GaugeMetricFamily("weka_quota_soft", "Weka Directory Soft Quota",
+                                        labels=["cluster",
+                                                "filesystem",
+                                                "directory",
+                                                "owner"])
+
+        # value is the hard quota
+        hard_gauge = GaugeMetricFamily("weka_quota_hard", "Weka Directory Hard Quota",
+                                        labels=["cluster",
+                                                "filesystem",
+                                                "directory",
+                                                "owner"])
+
+        # value is the used bytes
+        used_gauge = GaugeMetricFamily("weka_quota_used", "Weka Directory Quota Used Bytes",
+                                        labels=["cluster",
+                                                "filesystem",
+                                                "directory",
+                                                "owner"])
+
+        # value is the used bytes
+        remaining_hard_gauge = GaugeMetricFamily("weka_quota_remaining", "Weka Directory Quota Remaining Bytes (hard quota)",
+                                        labels=["cluster",
+                                                "filesystem",
+                                                "directory",
+                                                "owner"])
 
         # we have to ask for quotas for each FS individually, so get a list of filesystems
         filesystems = self.get_filesystems()
@@ -124,8 +155,20 @@ class Collector(object):
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
                                             str(round(details['hardLimitBytes']/1000/1000/1000,1))],
                                             str(round(details['totalBytes']/1000/1000/1000,1)) )
+                    soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                           float(details['softLimitBytes']))
+                    hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                           details['hardLimitBytes'])
+                    used_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                           details['totalBytes'])
+                    remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                           int(details['hardLimitBytes']) - int(details['totalBytes']))
 
-        return quota_gauge
+        yield quota_gauge
+        yield soft_gauge
+        yield hard_gauge
+        yield used_gauge
+        yield remaining_hard_gauge
 
     # returns a list of filesystem names
     def get_filesystems(self):
