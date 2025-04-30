@@ -14,5 +14,5 @@ cluster:
     - weka67
   force_https: False   # only 3.10+ clusters support https
   verify_cert: False  # default cert cannot be verified
-  filesystems:
-    - six
+#  filesystems:
+#    - six
