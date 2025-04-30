@@ -187,8 +187,16 @@ class Collector(object):
 
         fsnames = list()
 
-        # filesystems_cap is a list of dict's
-        for _, fs in filesystems_cap.items():
+        # filesystems_cap is a list of dict's - NOT ANYMORE!
+        if type(filesystems_cap) is dict:
+            fs_list = filesystems_cap.values()
+        elif type(filesystems_cap) is list:
+            fs_list = filesystems_cap
+        else:
+            log.error(f"Error querying cluster for FS names: unexpected datatype: {filesystems_cap}")
+            return []
+
+        for fs in fs_list:
             fsnames.append(fs['name'])
 
         return fsnames
