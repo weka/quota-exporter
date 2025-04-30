@@ -16,7 +16,7 @@ from wekalib import signal_handling, WekaCluster
 
 from collector import Collector
 
-VERSION = "1.0.0"
+VERSION = "2025-04-29"
 
 # set the root log
 log = logging.getLogger()
@@ -60,6 +60,9 @@ def prom_client(config):
 
     if 'force_https' not in config['cluster']:  # allow defaults for these
         config['cluster']['force_https'] = False
+
+    if 'filesystems' not in config['cluster']:
+        config['cluster']['filesystems'] = None
 
     if 'verify_cert' not in config['cluster']:
         config['cluster']['verify_cert'] = True
