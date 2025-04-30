@@ -23,6 +23,7 @@ class Collector(object):
         self.api_stats = {}
         self.backends_only = config['exporter']['backends_only']    # calling routine verifies this is there
         self.exceeded_only = config['exporter']['exceeded_only']    # calling routine verifies this is there
+        self.filesystems = config['cluster']['filesystems']
 
         self.cluster = cluster_obj
 
@@ -147,7 +148,9 @@ class Collector(object):
         for fs in filesystems:
             quotas = self.get_quotas(fs)
             for quota, details in quotas.items():
-                if not self.exceeded_only or (self.exceeded_only and details['totalBytes'] > details['softLimitBytes']):
+                if not self.exceeded_only or (self.exceeded_only and
+                                              (details['totalBytes'] > details['softLimitBytes'] or
+                                               details['totalBytes'] > details['hardLimitBytes'])):
                     dirname = self.resolve_dirname(details)
                     if details['owner'] is None:
                         details['owner'] = ""   # prevent prom client from puking if it's None
@@ -155,7 +158,8 @@ class Collector(object):
                                             str(round(details['softLimitBytes']/1000/1000/1000,1)),
                                             str(round(details['hardLimitBytes']/1000/1000/1000,1))],
                                             str(round(details['totalBytes']/1000/1000/1000,1)) )
-                    soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                    if details['softLimitBytes'] <= details['hardLimitBytes']:
+                        soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
                                            float(details['softLimitBytes']))
                     hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
                                            details['hardLimitBytes'])
@@ -172,6 +176,8 @@ class Collector(object):
 
     # returns a list of filesystem names
     def get_filesystems(self):
+        if self.filesystems is not None:
+            return self.filesystems
         self.api_stats['num_calls'] += 1
         try:
             filesystems_cap = self.cluster.call_api(method="filesystems_get_capacity", parms={})
@@ -182,7 +188,7 @@ class Collector(object):
         fsnames = list()
 
         # filesystems_cap is a list of dict's
-        for fs in filesystems_cap:
+        for _, fs in filesystems_cap.items():
             fsnames.append(fs['name'])
 
         return fsnames
