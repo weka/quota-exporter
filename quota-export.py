@@ -16,7 +16,7 @@ from wekalib import signal_handling, WekaCluster
 
 from collector import Collector
 
-VERSION = "2025-04-29"
+VERSION = "2025-06-25"
 
 # set the root log
 log = logging.getLogger()
@@ -58,6 +58,7 @@ def prom_client(config):
         log.error(f"'exporter:' stanza missing from .yml file - version mismatch between .yml and exporter version?")
         sys.exit(1)
 
+    # cluster stanza
     if 'force_https' not in config['cluster']:  # allow defaults for these
         config['cluster']['force_https'] = False
 
@@ -67,6 +68,10 @@ def prom_client(config):
     if 'verify_cert' not in config['cluster']:
         config['cluster']['verify_cert'] = True
 
+    if 'mgmt_port' not in config['cluster']:
+        config['cluster']['mgmt_port'] = 14000
+
+    # exporter stanza
     if 'timeout' not in config['exporter']:
         config['exporter']['timeout'] = 10
 
@@ -76,9 +81,6 @@ def prom_client(config):
     if 'exceeded_only' not in config['exporter']:
         config['exporter']['exceeded_only'] = True
 
-    if 'mgmt_port' not in config['exporter']:
-        config['exporter']['mgmt_port'] = 14000
-
     log.info(f"Timeout set to {config['exporter']['timeout']} secs")
 
     try:
@@ -87,7 +89,7 @@ def prom_client(config):
                                   verify_cert=config['cluster']['verify_cert'],
                                   backends_only=config['exporter']['backends_only'],
                                   timeout=config['exporter']['timeout'],
-                                  mgmt_port=config['exporter']['mgmt_port'])
+                                  mgmt_port=config['cluster']['mgmt_port'])
     except wekalib.exceptions.HTTPError as exc:
         if exc.code == 403:
             log.critical(f"Cluster returned permission error - is the userid level ReadOnly or above?")
