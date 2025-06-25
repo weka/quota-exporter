@@ -14,5 +14,7 @@ cluster:
     - weka67
   force_https: False   # only 3.10+ clusters support https
   verify_cert: False  # default cert cannot be verified
+  mgmt_port: 14000     # allow for different ports so we can support composable clusters
+##  optionally list specific filesystems so that not all are looked at
 #  filesystems:
 #    - six
