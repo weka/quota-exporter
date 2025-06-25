@@ -76,6 +76,9 @@ def prom_client(config):
     if 'exceeded_only' not in config['exporter']:
         config['exporter']['exceeded_only'] = True
 
+    if 'mgmt_port' not in config['exporter']:
+        config['exporter']['mgmt_port'] = 14000
+
     log.info(f"Timeout set to {config['exporter']['timeout']} secs")
 
     try:
@@ -83,7 +86,8 @@ def prom_client(config):
                                   force_https=config['cluster']['force_https'],
                                   verify_cert=config['cluster']['verify_cert'],
                                   backends_only=config['exporter']['backends_only'],
-                                  timeout=config['exporter']['timeout'])
+                                  timeout=config['exporter']['timeout'],
+                                  mgmt_port=config['exporter']['mgmt_port'])
     except wekalib.exceptions.HTTPError as exc:
         if exc.code == 403:
             log.critical(f"Cluster returned permission error - is the userid level ReadOnly or above?")
