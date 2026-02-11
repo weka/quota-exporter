@@ -1,9 +1,13 @@
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 
 ARG BASEDIR="/weka"
 ARG ID="472"
 ARG USER="weka"
+
+RUN apt update
+RUN apt -y upgrade
+RUN apt -y install adduser
 
 RUN adduser --home $BASEDIR --uid $ID --disabled-password --gecos "Weka User" $USER
 
