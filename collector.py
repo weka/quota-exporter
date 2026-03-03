@@ -1,3 +1,4 @@
+import random
 import sys
 import threading
 import time
@@ -40,6 +41,10 @@ class Collector(object):
 
         self.asyncobj = None
         self.quota_objs = list()
+        self.quota_map = dict()
+
+        self.hostlist = None
+        self.circular_host_list = None
 
         # populate the name cache on startup
         #log.info("Collecting...")
@@ -259,10 +264,10 @@ class Collector(object):
         log.info(f"ET for filesystem '{fs_name}': to collect quotas: {round(time.time() - start_time, 2)}s; total quotas is {len(all_quotas)}")
 
         # Get list of hosts
-        hostlist = self.fetch_hostlist()
-        self.circular_host_list = circular_list(inputlist=hostlist)
+        self.hostlist = self.fetch_hostlist()
+        self.circular_host_list = circular_list(inputlist=self.hostlist)
 
-        quota_map = dict()
+        self.quota_map = dict()
         quotas_to_return = dict()
 
         # resolve all dirnames asynchronously
@@ -271,6 +276,7 @@ class Collector(object):
             if not self.exceeded_only or (self.exceeded_only and
                                           (quota_details['totalBytes'] > quota_details['softLimitBytes'] or
                                            quota_details['totalBytes'] > quota_details['hardLimitBytes'])):
+                # is it in our cache?
                 if fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and 'path' in self.quotas_last[fs_name][quota_id]:
                     # update the path we last used for this quota
                     quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
@@ -278,55 +284,67 @@ class Collector(object):
                     #log.info(f"{quota_details['path']} found in cache")
                     quotas_to_return[quota_id] = quota_details
                 else:
+                    # not in cache... get fetch it from the cluster
                     # map the keys to something we can identify - the quota id returned by the API isn't useful
                     map_key = (quota_details.get('inodeId'), quota_details.get('snapViewId'))
-                    quota_map[map_key] = quota_id
+                    self.quota_map[map_key] = quota_id
                     parms = {'inodeContext': quota_details['inodeId'], 'snapViewId': quota_details['snapViewId']}
                     # queue up API calls
                     self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
                     self.api_stats['num_calls'] += 1
         # actually execute the API calls
         timestamp = time.time()
+        namecount = 0
         for nameobj in self.asyncobj.wait():
-            #quota = quota_location_dict[str(nameobj.parms['inodeContext']) + '-' + str(nameobj.parms['snapViewId'])]
-            quota = quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
+            namecount += 1
+            quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
             if 'path' in all_quotas[quota]:
                 log.error(f"{all_quotas[quota]['path']} is not supposed to be in cache")
             all_quotas[quota]['path'] = nameobj.result['path']
-            all_quotas[quota]['last_update_time'] = timestamp
+            # we'll explain the random age adjustment... on startup, we fetch all quotas, they will have timestamps
+            # within a minute or so of each other... The background updater would likely have to update nearly all of
+            # them at once, so we'll adjust the age to make sure they get spread out over time
+            all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
             quotas_to_return[quota] = all_quotas[quota]
-            #log.info(f"{nameobj.result['path']} saved in cache")
-        log.info(f"ET for name resolution: {round(time.time() - async_start_time, 2)}")
+
+        elapsed_time = time.time() - async_start_time
+        log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave names_per_sec={namecount/elapsed_time}")
         #return all_quotas
         return quotas_to_return
 
     def _background_name_updater(self):
         """ update the path names in the quotas in the background so none are too old... """
-        time.sleep(60)   # don't interfere with initial fetch of data on startup
+        time.sleep(3*60)   # don't interfere with initial fetch of data on startup
         log.info(f"Background name updater starting...")
         while True:
-            log.info(f"Background name updater looping...")
-            time.sleep(5)
-            #min_time_delta = 1000000 # million secs should be good
+            #log.info(f"Background name updater looping...")
+            time.sleep(30)   # only query once every X secs so we don't overload the cluster
             # serialize with the collector so we don't step on each other
             for filesystem in self.quotas_last.keys():
-                log.info(f"Background name updater updating {filesystem} - acquiring lock")
+                log.debug(f"Background name updater updating {filesystem} - acquiring lock")
                 with self._access_lock:
                     #log.info(f"Background name updater - lock acquired")
                     timenow = time.time()
                     updated_count = 0
+                    self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
                     for quota_id, quota_info in self.quotas_last[filesystem].items():
-                        #time_delta = timenow - quota_info['last_update_time']
-                        #if time_delta < min_time_delta:
-                        #    min_time_delta = time_delta
-                        if timenow - quota_info['last_update_time'] > len(self.quotas_last[filesystem]):  # assume 1s per query
-                            quota_info['path'] = self._resolve_dirname(quota_info)
-                            quota_info['last_update_time'] = time.time()
+                        if timenow - quota_info['last_update_time'] > 60*60*12:  # older than 12 hours
+                            parms = {'inodeContext': quota_info['inodeId'], 'snapViewId': quota_info['snapViewId']}
+                            self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
                             updated_count += 1
-                            if updated_count >= 5:
-                                break   # only do a handful, then re-acquire lock so we don't interfere with Prometheus
-                log.info(f"Background name updater - lock released; held for {round(time.time() - timenow, 4)} seconds")
-        #return None
+                            if updated_count >= len(self.hostlist): # that's enough for now
+                                break
+                    for nameobj in self.asyncobj.wait():
+                        #log.info(f"Background name updater updating an entry")
+                        try:
+                            quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
+                        except KeyError:
+                            continue
+                        log.debug(f"{quota} updated")
+                        self.quotas_last[filesystem][quota]['path'] = nameobj.result['path']
+                        self.quotas_last[filesystem][quota]['last_update_time'] = time.time()
+
+                log.debug(f"Background name updater - lock released; held for {round(time.time() - timenow, 4)} seconds")
 
 
     def _resolve_dirname(self, quota):
