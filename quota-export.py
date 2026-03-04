@@ -175,8 +175,8 @@ def configure_logging(logger, verbosity, disable_syslog=False):
     logger.setLevel(loglevel)
 
     logging.getLogger("wekalib").setLevel(logging.ERROR)
-    logging.getLogger("wekalib.wekaapi").setLevel(libloglevel) # should leave at INFO as default
-    logging.getLogger("wekalib.wekacluster").setLevel(libloglevel)
+    logging.getLogger("wekalib.wekaapi").setLevel(logging.ERROR) # should leave at INFO as default
+    logging.getLogger("wekalib.wekacluster").setLevel(logging.ERROR)
     logging.getLogger("wekalib.sthreads").setLevel(logging.ERROR) # should leave at ERROR as default
     logging.getLogger("urllib3").setLevel(logging.ERROR)
 
