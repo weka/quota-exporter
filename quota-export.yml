@@ -2,8 +2,10 @@
 exporter:
   listen_port: 8101
   timeout: 10.0
-  backends_only: True
-  exceeded_only: True
+  backends_only: True # actually ignored
+  exceeded_only: False
+  max_procs: 2
+  max_threads_per_proc: 40
 
 # cluster section - info about the weka cluster we want to export data from:
 cluster:
@@ -16,5 +18,5 @@ cluster:
   verify_cert: False  # default cert cannot be verified
   mgmt_port: 14000     # allow for different ports so we can support composable clusters
 ##  optionally list specific filesystems so that not all are looked at
-#  filesystems:
-#    - six
+  filesystems:
+    - default
