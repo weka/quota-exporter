@@ -51,8 +51,9 @@ class Collector(object):
         #self.collect()
         #log.info("Collect complete. ")
 
-        self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
-        self.background_thread.start()
+        # we don't really need this?
+        #self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
+        #self.background_thread.start()
 
 
     def collect(self):
@@ -276,6 +277,7 @@ class Collector(object):
             if not self.exceeded_only or (self.exceeded_only and
                                           (quota_details['totalBytes'] > quota_details['softLimitBytes'] or
                                            quota_details['totalBytes'] > quota_details['hardLimitBytes'])):
+                """
                 # is it in our cache?
                 if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
                                                     'path' in self.quotas_last[fs_name][quota_id]):
@@ -293,30 +295,40 @@ class Collector(object):
                     # queue up API calls
                     self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
                     self.api_stats['num_calls'] += 1
+                """
+                # make a map so we can correlate the path and the quota easily
+                map_key = (quota_details.get('inodeId'), quota_details.get('snapViewId'))
+                self.quota_map[map_key] = quota_id
+                parms = {'inodeContext': quota_details['inodeId'], 'snapViewId': quota_details['snapViewId']}
+                # queue up API calls
+                self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
+                self.api_stats['num_calls'] += 1
         # actually execute the API calls
         timestamp = time.time()
         namecount = 0
         for nameobj in self.asyncobj.wait():
             namecount += 1
             quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
-            if 'path' in all_quotas[quota]:
-                log.error(f"{all_quotas[quota]['path']} is not supposed to be in cache")
+            #if 'path' in all_quotas[quota]:
+            #    log.error(f"{all_quotas[quota]['path']} is not supposed to be in cache")
             all_quotas[quota]['path'] = nameobj.result['path']
             # we'll explain the random age adjustment... on startup, we fetch all quotas, they will have timestamps
             # within a minute or so of each other... The background updater would likely have to update nearly all of
             # them at once, so we'll adjust the age to make sure they get spread out over time
-            all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
+            #all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
             quotas_to_return[quota] = all_quotas[quota]
 
         elapsed_time = time.time() - async_start_time
         time_per_name = (elapsed_time / namecount) if namecount > 0 else 0
         log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave "
-                    + f"secs/name={round(time_per_name,2)}")
+                    + f"secs/name={round(time_per_name,4)}")
         #return all_quotas
         return quotas_to_return
 
+    """
+    # no longer needed?
     def _background_name_updater(self):
-        """ update the path names in the quotas in the background so none are too old... """
+        # update the path names in the quotas in the background so none are too old... 
         time.sleep(3*60)   # don't interfere with initial fetch of data on startup
         log.info(f"Background name updater starting...")
         while True:
@@ -348,6 +360,7 @@ class Collector(object):
                         self.quotas_last[filesystem][quota]['last_update_time'] = time.time()
 
                 log.debug(f"Background name updater - lock released; held for {round(time.time() - timenow, 4)} seconds")
+    """
 
 
     def _resolve_dirname(self, quota):
