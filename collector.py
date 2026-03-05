@@ -277,7 +277,8 @@ class Collector(object):
                                           (quota_details['totalBytes'] > quota_details['softLimitBytes'] or
                                            quota_details['totalBytes'] > quota_details['hardLimitBytes'])):
                 # is it in our cache?
-                if fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and 'path' in self.quotas_last[fs_name][quota_id]:
+                if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
+                                                    'path' in self.quotas_last[fs_name][quota_id]):
                     # update the path we last used for this quota
                     quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
                     quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
@@ -308,7 +309,9 @@ class Collector(object):
             quotas_to_return[quota] = all_quotas[quota]
 
         elapsed_time = time.time() - async_start_time
-        log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave names_per_sec={namecount/elapsed_time}")
+        time_per_name = (elapsed_time / namecount) if namecount > 0 else 0
+        log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave "
+                    + f"secs/name={round(time_per_name,2)}")
         #return all_quotas
         return quotas_to_return
 
@@ -318,7 +321,7 @@ class Collector(object):
         log.info(f"Background name updater starting...")
         while True:
             #log.info(f"Background name updater looping...")
-            time.sleep(30)   # only query once every X secs so we don't overload the cluster
+            time.sleep(10)   # only query once every X secs so we don't overload the cluster
             # serialize with the collector so we don't step on each other
             for filesystem in self.quotas_last.keys():
                 log.debug(f"Background name updater updating {filesystem} - acquiring lock")

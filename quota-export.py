@@ -16,7 +16,7 @@ from wekalib import signal_handling, WekaCluster
 
 from collector import Collector
 
-VERSION = "20260303"
+VERSION = "20260305"
 
 # set the root log
 log = logging.getLogger()
@@ -183,6 +183,7 @@ def configure_logging(logger, verbosity, disable_syslog=False):
     logging.getLogger("urllib3").setLevel(logging.ERROR)
 
     # local modules
+    logging.getLogger("async_api").setLevel(logging.ERROR)
     logging.getLogger("collector").setLevel(loglevel)
 
 def main():
