@@ -154,8 +154,8 @@ class Collector(object):
         tp_start_time = time.time()
         # Parallelize resolve_dirname() calls (network-bound).
         # 4x number of hosts, or 100, whichever is less
-        #self.max_workers = min(100, max(1, (len(self.hostlist) if self.hostlist else 1) * 4))
-        self.max_workers = 75
+        self.max_workers = min(100, max(1, (len(self.hostlist) if self.hostlist else 1) * 4))
+        #self.max_workers = 12
         #log.info(f"Starting quota collection with {self.max_workers} workers")
 
         # for each FS, ask for quotas... this may require several calls
