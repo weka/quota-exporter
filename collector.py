@@ -1,5 +1,6 @@
 import random
 import sys
+import re
 import threading
 import time
 import traceback
@@ -46,14 +47,24 @@ class Collector(object):
         self.hostlist = None
         self.circular_host_list = None
 
+        self.new_api = None
+        self.method = None
+        self.totalBytes = None
+        self.softLimitBytes = None
+        self.hardLimitBytes = None
+        self.nextCookie = None
+        self.snapViewId = None
+        self.inodeId = None
+        self.inodeContext = None
+
         # populate the name cache on startup
         #log.info("Collecting...")
         #self.collect()
         #log.info("Collect complete. ")
 
         # we don't really need this?
-        #self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
-        #self.background_thread.start()
+        self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
+        self.background_thread.start()
 
 
     def collect(self):
@@ -176,34 +187,35 @@ class Collector(object):
 
         # for each FS, ask for quotas... this may require several calls
         for fs in filesystems:
+            self.test_new_api(fs)
+
             # save the last set of data; get fresh data
             quotas = self.get_quotas(fs)
+
             log.info(f"{len(quotas)} quotas in fs {fs}")
             self.quotas_last[fs] = deepcopy(dict(quotas))
 
             dirname_start = time.time()
             for quota, details in quotas.items():
-                if not self.exceeded_only or (self.exceeded_only and
-                                              (details['totalBytes'] > details['softLimitBytes'] or
-                                               details['totalBytes'] > details['hardLimitBytes'])):
 
-                    dirname = details.get('path', 'error')
+                dirname = details.get('path', 'error')
 
-                    if details['owner'] is None:
-                        details['owner'] = ""   # prevent prom client from puking if it's None
-                    quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
-                                            str(round(details['softLimitBytes']/1000/1000/1000,1)),
-                                            str(round(details['hardLimitBytes']/1000/1000/1000,1))],
-                                            str(round(details['totalBytes']/1000/1000/1000,1)) )
-                    if details['softLimitBytes'] <= details['hardLimitBytes']:
-                        soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
-                                           float(details['softLimitBytes']))
-                    hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
-                                           details['hardLimitBytes'])
-                    used_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
-                                           details['totalBytes'])
-                    remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
-                                           int(details['hardLimitBytes']) - int(details['totalBytes']))
+                if details['owner'] is None:
+                    details['owner'] = ""   # prevent prom client from puking if it's None
+                quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
+                                        str(round(details[self.softLimitBytes]/1000/1000/1000,1)),
+                                        str(round(details[self.hardLimitBytes]/1000/1000/1000,1))],
+                                        str(round(details[self.totalBytes]/1000/1000/1000,1)) )
+                if details[self.softLimitBytes] <= details[self.hardLimitBytes]:
+                    soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                       float(details[self.softLimitBytes]))
+                hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                       details[self.hardLimitBytes])
+                used_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                       details[self.totalBytes])
+                remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                                       int(details[self.hardLimitBytes]) - int(details[self.totalBytes]))
+
             log.info(f"ET to yield metrics for filesystem '{fs}': {round(time.time() - dirname_start, 2)}")
         yield quota_gauge
         yield soft_gauge
@@ -238,6 +250,52 @@ class Collector(object):
 
         return fsnames
 
+
+    def test_new_api(self, fs_name):
+        def set_old_api():
+            self.new_api = False
+            self.totalBytes = 'totalBytes'
+            self.softLimitBytes = 'softLimitBytes'
+            self.hardLimitBytes = 'hardLimitBytes'
+            self.nextCookie = 'nextCookie'
+            self.snapViewId = 'snapViewId'
+            self.inodeId = 'inodeId'
+            self.inodeContext = 'inodeContext'
+            self.method = "directory_quota_list"
+            self.get_path_integrated = False
+
+        def set_new_api():
+            self.new_api = True
+            self.totalBytes = 'total_bytes'
+            self.softLimitBytes = 'soft_limit_bytes'
+            self.hardLimitBytes = 'hard_limit_bytes'
+            self.nextCookie = 'next_cookie'
+            self.snapViewId = 'snap_view_id'
+            self.inodeId = 'inode_id'
+            self.inodeContext = 'inode_context'
+            self.method = "list_directory_quota_v2"
+            self.get_path_integrated = True
+
+        # for testing:
+        #set_old_api()
+        #return
+        # make the exporter backward compatible
+        if self.new_api is None:
+            try:
+                quotas = self.cluster.call_api(method='list_directory_quota_v2',
+                                               parms={"fs_name": fs_name, "start_cookie": 0})
+
+            except Exception as exc:
+                # old API
+                log.info(f"New API not available, using old API: {exc}")
+                set_old_api()
+                return
+
+            # new API (thanks for changing everything LOL)
+            log.info(f"New API available")
+            set_new_api()
+            return
+
     def get_quotas(self, fs_name):
         first_time = True
         nextCookie = 0
@@ -250,86 +308,95 @@ class Collector(object):
             self.api_stats['num_calls'] += 1
             first_time = False
             this_call_start = time.time()
+
+            parms = {"fs_name": fs_name, "start_cookie": nextCookie }
+            if self.get_path_integrated:
+                parms['get_path'] = True
+
             try:
-                result = self.cluster.call_api(method='directory_quota_list',
-                                               parms={"fs_name": fs_name, "start_cookie": nextCookie})
+                result = self.cluster.call_api(method=self.method, parms=parms)
             except Exception as exc:
                 log.error(f"Error fetching more quotas for fs {fs_name}: {exc}")
                 return None
+
             log.debug(f"ET for api call: {time.time() - this_call_start}")
-            nextCookie = result['nextCookie']
+            nextCookie = result[self.nextCookie]
+
             quotas = result['quotas']
-            all_quotas.update(quotas)
+            if type(quotas) is dict:
+                all_quotas.update(quotas)   # new API format
+            else:
+                for quota in quotas:
+                    all_quotas[quota['quota_id']] = quota # old API format
             log.debug(f"number of quotas returned is {len(quotas)}")
 
         log.info(f"ET for filesystem '{fs_name}': to collect quotas: {round(time.time() - start_time, 2)}s; total quotas is {len(all_quotas)}")
 
-        # Get list of hosts
-        self.hostlist = self.fetch_hostlist()
-        self.circular_host_list = circular_list(inputlist=self.hostlist)
-
-        self.quota_map = dict()
         quotas_to_return = dict()
-
-        # resolve all dirnames asynchronously
-        async_start_time = time.time()
-        for quota_id, quota_details in all_quotas.items():
-            if not self.exceeded_only or (self.exceeded_only and
-                                          (quota_details['totalBytes'] > quota_details['softLimitBytes'] or
-                                           quota_details['totalBytes'] > quota_details['hardLimitBytes'])):
-                """
-                # is it in our cache?
-                if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
-                                                    'path' in self.quotas_last[fs_name][quota_id]):
-                    # update the path we last used for this quota
-                    quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
-                    quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
-                    #log.info(f"{quota_details['path']} found in cache")
+        if self.new_api:
+            for quota_id, quota_details in all_quotas.items():
+                if not self.exceeded_only or (self.exceeded_only and
+                                              (quota_details[self.totalBytes] > quota_details[self.softLimitBytes] or
+                                               quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
                     quotas_to_return[quota_id] = quota_details
-                else:
-                    # not in cache... get fetch it from the cluster
-                    # map the keys to something we can identify - the quota id returned by the API isn't useful
-                    map_key = (quota_details.get('inodeId'), quota_details.get('snapViewId'))
-                    self.quota_map[map_key] = quota_id
-                    parms = {'inodeContext': quota_details['inodeId'], 'snapViewId': quota_details['snapViewId']}
-                    # queue up API calls
-                    self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
-                    self.api_stats['num_calls'] += 1
-                """
-                # make a map so we can correlate the path and the quota easily
-                map_key = (quota_details.get('inodeId'), quota_details.get('snapViewId'))
-                self.quota_map[map_key] = quota_id
-                parms = {'inodeContext': quota_details['inodeId'], 'snapViewId': quota_details['snapViewId']}
-                # queue up API calls
-                self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
-                self.api_stats['num_calls'] += 1
-        # actually execute the API calls
-        timestamp = time.time()
-        namecount = 0
-        for nameobj in self.asyncobj.wait():
-            namecount += 1
-            quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
-            #if 'path' in all_quotas[quota]:
-            #    log.error(f"{all_quotas[quota]['path']} is not supposed to be in cache")
-            all_quotas[quota]['path'] = nameobj.result['path']
-            # we'll explain the random age adjustment... on startup, we fetch all quotas, they will have timestamps
-            # within a minute or so of each other... The background updater would likely have to update nearly all of
-            # them at once, so we'll adjust the age to make sure they get spread out over time
-            #all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
-            quotas_to_return[quota] = all_quotas[quota]
+        else:
+            # Get list of hosts
+            self.hostlist = self.fetch_hostlist()
+            self.circular_host_list = circular_list(inputlist=self.hostlist)
 
-        elapsed_time = time.time() - async_start_time
-        time_per_name = (elapsed_time / namecount) if namecount > 0 else 0
-        log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave "
-                    + f"secs/name={round(time_per_name,4)}")
-        #return all_quotas
+            self.quota_map = dict()
+
+            # resolve all dirnames asynchronously
+            async_start_time = time.time()
+            for quota_id, quota_details in all_quotas.items():
+                if not self.exceeded_only or (self.exceeded_only and
+                                              (quota_details[self.totalBytes] > quota_details[self.softLimitBytes] or
+                                               quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
+
+                    # is it in our cache?
+                    if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
+                            'path' in self.quotas_last[fs_name][quota_id]):
+                        # update the path we last used for this quota
+                        quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
+                        quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
+                        # log.info(f"{quota_details['path']} found in cache")
+                        quotas_to_return[quota_id] = quota_details
+                    else:
+                        # make a map so we can correlate the path and the quota easily
+                        map_key = (quota_details.get(self.inodeId), quota_details.get(self.snapViewId))
+                        self.quota_map[map_key] = quota_id
+                        parms = {'inodeContext': quota_details[self.inodeId], 'snapViewId': quota_details[self.snapViewId]}
+                        # queue up API calls
+                        self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
+                        self.api_stats['num_calls'] += 1
+            # actually execute the API calls
+            timestamp = time.time()
+            namecount = 0
+            for nameobj in self.asyncobj.wait():
+                namecount += 1
+                quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
+                #if 'path' in all_quotas[quota]:
+                #    log.error(f"{all_quotas[quota]['path']} is not supposed to be in cache")
+                all_quotas[quota]['path'] = nameobj.result['path']
+                # we'll explain the random age adjustment... on startup, we fetch all quotas, they will have timestamps
+                # within a minute or so of each other... The background updater would likely have to update nearly all of
+                # them at once, so we'll adjust the age to make sure they get spread out over time
+                all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
+                quotas_to_return[quota] = all_quotas[quota]
+
+            elapsed_time = time.time() - async_start_time
+            time_per_name = (elapsed_time / namecount) if namecount > 0 else 0
+            log.info(f"ET for name resolution: {round(elapsed_time, 2)}, ave "
+                        + f"secs/name={round(time_per_name,4)}")
         return quotas_to_return
 
-    """
     # no longer needed?
     def _background_name_updater(self):
-        # update the path names in the quotas in the background so none are too old... 
-        time.sleep(3*60)   # don't interfere with initial fetch of data on startup
+        # update the path names in the quotas in the background so none are too old...
+        while self.new_api is None:
+            time.sleep(60)   # don't interfere with initial fetch of data on startup
+        if self.new_api:
+            return  # new api doesn't need a background updater
         log.info(f"Background name updater starting...")
         while True:
             #log.info(f"Background name updater looping...")
@@ -344,7 +411,7 @@ class Collector(object):
                     self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
                     for quota_id, quota_info in self.quotas_last[filesystem].items():
                         if timenow - quota_info['last_update_time'] > 60*60*12:  # older than 12 hours
-                            parms = {'inodeContext': quota_info['inodeId'], 'snapViewId': quota_info['snapViewId']}
+                            parms = {'inodeContext': quota_info[self.inodeId], 'snapViewId': quota_info[self.snapViewId]}
                             self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
                             updated_count += 1
                             if updated_count >= len(self.hostlist): # that's enough for now
@@ -352,7 +419,7 @@ class Collector(object):
                     for nameobj in self.asyncobj.wait():
                         #log.info(f"Background name updater updating an entry")
                         try:
-                            quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
+                            quota = self.quota_map[(nameobj.parms.get(self.inodeContext), nameobj.parms.get(self.snapViewId))]
                         except KeyError:
                             continue
                         log.debug(f"{quota} updated")
@@ -360,11 +427,10 @@ class Collector(object):
                         self.quotas_last[filesystem][quota]['last_update_time'] = time.time()
 
                 log.debug(f"Background name updater - lock released; held for {round(time.time() - timenow, 4)} seconds")
-    """
 
 
     def _resolve_dirname(self, quota):
-        """ use the cluster API to resolve the dirname """
+        # use the cluster API to resolve the dirname 
         start_time = time.time()
         #self.api_stats['num_calls'] += 1
         #log.info(f"resolving directory name in background updater")
