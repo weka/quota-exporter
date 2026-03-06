@@ -1,6 +1,7 @@
 import random
 import sys
 import re
+import threading
 import time
 import traceback
 from copy import deepcopy
@@ -62,8 +63,8 @@ class Collector(object):
         #log.info("Collect complete. ")
 
         # we don't really need this?
-        #self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
-        #self.background_thread.start()
+        self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
+        self.background_thread.start()
 
 
     def collect(self):
@@ -391,8 +392,11 @@ class Collector(object):
 
     # no longer needed?
     def _background_name_updater(self):
-        # update the path names in the quotas in the background so none are too old... 
-        time.sleep(3*60)   # don't interfere with initial fetch of data on startup
+        # update the path names in the quotas in the background so none are too old...
+        while self.new_api is None:
+            time.sleep(60)   # don't interfere with initial fetch of data on startup
+        if self.new_api:
+            return  # new api doesn't need a background updater
         log.info(f"Background name updater starting...")
         while True:
             #log.info(f"Background name updater looping...")

@@ -16,7 +16,7 @@ from wekalib import signal_handling, WekaCluster
 
 from collector import Collector
 
-VERSION = "20260305"
+VERSION = "20260306"
 
 # set the root log
 log = logging.getLogger()
