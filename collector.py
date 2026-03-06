@@ -1,3 +1,4 @@
+import random
 import sys
 import re
 import time
@@ -275,8 +276,8 @@ class Collector(object):
             self.get_path_integrated = True
 
         # for testing:
-        set_old_api()
-        return
+        #set_old_api()
+        #return
         # make the exporter backward compatible
         if self.new_api is None:
             try:
@@ -351,13 +352,22 @@ class Collector(object):
                                               (quota_details[self.totalBytes] > quota_details[self.softLimitBytes] or
                                                quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
 
-                    # make a map so we can correlate the path and the quota easily
-                    map_key = (quota_details.get(self.inodeId), quota_details.get(self.snapViewId))
-                    self.quota_map[map_key] = quota_id
-                    parms = {'inodeContext': quota_details[self.inodeId], 'snapViewId': quota_details[self.snapViewId]}
-                    # queue up API calls
-                    self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
-                    self.api_stats['num_calls'] += 1
+                    # is it in our cache?
+                    if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
+                            'path' in self.quotas_last[fs_name][quota_id]):
+                        # update the path we last used for this quota
+                        quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
+                        quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
+                        # log.info(f"{quota_details['path']} found in cache")
+                        quotas_to_return[quota_id] = quota_details
+                    else:
+                        # make a map so we can correlate the path and the quota easily
+                        map_key = (quota_details.get(self.inodeId), quota_details.get(self.snapViewId))
+                        self.quota_map[map_key] = quota_id
+                        parms = {'inodeContext': quota_details[self.inodeId], 'snapViewId': quota_details[self.snapViewId]}
+                        # queue up API calls
+                        self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
+                        self.api_stats['num_calls'] += 1
             # actually execute the API calls
             timestamp = time.time()
             namecount = 0
@@ -370,7 +380,7 @@ class Collector(object):
                 # we'll explain the random age adjustment... on startup, we fetch all quotas, they will have timestamps
                 # within a minute or so of each other... The background updater would likely have to update nearly all of
                 # them at once, so we'll adjust the age to make sure they get spread out over time
-                #all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
+                all_quotas[quota]['last_update_time'] = timestamp - random.randint(0,60*60*12)
                 quotas_to_return[quota] = all_quotas[quota]
 
             elapsed_time = time.time() - async_start_time
@@ -379,7 +389,6 @@ class Collector(object):
                         + f"secs/name={round(time_per_name,4)}")
         return quotas_to_return
 
-    """
     # no longer needed?
     def _background_name_updater(self):
         # update the path names in the quotas in the background so none are too old... 
@@ -398,7 +407,7 @@ class Collector(object):
                     self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
                     for quota_id, quota_info in self.quotas_last[filesystem].items():
                         if timenow - quota_info['last_update_time'] > 60*60*12:  # older than 12 hours
-                            parms = {'inodeContext': quota_info['inodeId'], 'snapViewId': quota_info['snapViewId']}
+                            parms = {'inodeContext': quota_info[self.inodeId], 'snapViewId': quota_info[self.snapViewId]}
                             self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
                             updated_count += 1
                             if updated_count >= len(self.hostlist): # that's enough for now
@@ -406,7 +415,7 @@ class Collector(object):
                     for nameobj in self.asyncobj.wait():
                         #log.info(f"Background name updater updating an entry")
                         try:
-                            quota = self.quota_map[(nameobj.parms.get('inodeContext'), nameobj.parms.get('snapViewId'))]
+                            quota = self.quota_map[(nameobj.parms.get(self.inodeContext), nameobj.parms.get(self.snapViewId))]
                         except KeyError:
                             continue
                         log.debug(f"{quota} updated")
@@ -430,7 +439,6 @@ class Collector(object):
 
         log.debug(f"ET to background resolve name: {time.time() - start_time}")
         return result['path']
-    """
 
     def fetch_hostlist(self):
         start_time = time.time()
