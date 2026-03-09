@@ -205,23 +205,23 @@ class Collector(object):
                 soft_limit = str(round(details[self.softLimitBytes]/1000/1000/1000,1)) if details[self.softLimitBytes] else ""
                 hard_limit = str(round(details[self.hardLimitBytes]/1000/1000/1000,1)) if details[self.hardLimitBytes] else ""
 
-                quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
+                quota_gauge.add_metric([str(self.cluster), fs, dirname, owner,
                                        soft_limit, hard_limit],
                                        str(round(details[self.totalBytes]/1000/1000/1000,1)) )
                                         #str(round(details[self.softLimitBytes]/1000/1000/1000,1)),
                                         #str(round(details[self.hardLimitBytes]/1000/1000/1000,1))],
                 if (not self.new_api and details[self.softLimitBytes] <= details[self.hardLimitBytes]) or \
                                     self.new_api and details[self.softLimitBytes] is not None:
-                    soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                    soft_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        float(details[self.softLimitBytes]))
 
                 if self.new_api and details[self.hardLimitBytes] is not None:
-                    hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                    hard_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        details[self.hardLimitBytes])
-                used_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                used_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        details[self.totalBytes])
                 if self.new_api and details[self.hardLimitBytes] is not None:
-                    remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                    remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        int(details[self.hardLimitBytes]) - int(details[self.totalBytes]))
 
             log.info(f"ET to yield metrics for filesystem '{fs}': {round(time.time() - dirname_start, 2)}")
