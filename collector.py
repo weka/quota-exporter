@@ -31,8 +31,9 @@ class Collector(object):
         self.api_stats = {'num_calls': 0,}
         #self.backends_only = config['exporter']['backends_only']    # calling routine verifies this is there
         self.exceeded_only = config['exporter']['exceeded_only']    # calling routine verifies this is there
-        self.max_procs = config['exporter']['max_procs']
-        self.max_threads_per_proc = config['exporter']['max_threads_per_proc']
+        self.max_procs = config['exporter']['max_procs'] if 'max_procs' in config['exporter'] else 2
+        self.max_threads_per_proc = config['exporter']['max_threads_per_proc'] if 'max_threads_per_proc' \
+                                                                                  in config['exporter'] else 40
         self.filesystems = config['cluster']['filesystems']
 
         self.cluster = cluster_obj
@@ -200,20 +201,27 @@ class Collector(object):
 
                 dirname = details.get('path', 'error')
 
-                if details['owner'] is None:
-                    details['owner'] = ""   # prevent prom client from puking if it's None
-                quota_gauge.add_metric([str(self.cluster), fs, dirname, details['owner'],
-                                        str(round(details[self.softLimitBytes]/1000/1000/1000,1)),
-                                        str(round(details[self.hardLimitBytes]/1000/1000/1000,1))],
-                                        str(round(details[self.totalBytes]/1000/1000/1000,1)) )
-                if details[self.softLimitBytes] <= details[self.hardLimitBytes]:
-                    soft_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                owner = details['owner'] if details['owner'] else ""
+                soft_limit = str(round(details[self.softLimitBytes]/1000/1000/1000,1)) if details[self.softLimitBytes] else ""
+                hard_limit = str(round(details[self.hardLimitBytes]/1000/1000/1000,1)) if details[self.hardLimitBytes] else ""
+
+                quota_gauge.add_metric([str(self.cluster), fs, dirname, owner,
+                                       soft_limit, hard_limit],
+                                       str(round(details[self.totalBytes]/1000/1000/1000,1)) )
+                                        #str(round(details[self.softLimitBytes]/1000/1000/1000,1)),
+                                        #str(round(details[self.hardLimitBytes]/1000/1000/1000,1))],
+                if (not self.new_api and details[self.softLimitBytes] <= details[self.hardLimitBytes]) or \
+                                    self.new_api and details[self.softLimitBytes] is not None:
+                    soft_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        float(details[self.softLimitBytes]))
-                hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+
+                if self.new_api and details[self.hardLimitBytes] is not None:
+                    hard_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        details[self.hardLimitBytes])
-                used_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                used_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        details[self.totalBytes])
-                remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, details['owner']],
+                if self.new_api and details[self.hardLimitBytes] is not None:
+                    remaining_hard_gauge.add_metric([str(self.cluster), fs, dirname, owner],
                                        int(details[self.hardLimitBytes]) - int(details[self.totalBytes]))
 
             log.info(f"ET to yield metrics for filesystem '{fs}': {round(time.time() - dirname_start, 2)}")
