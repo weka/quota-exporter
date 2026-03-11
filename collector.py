@@ -18,6 +18,9 @@ from prometheus_client.core import GaugeMetricFamily
 
 log = getLogger(__name__)
 
+# the WEKA api returns this as a cookie to indicate that there are no more entries
+MAX_U64 = 2**64 - 1
+
 
 class Collector(object):
     def __init__(self, config, cluster_obj):  # wekaCollector
@@ -34,6 +37,9 @@ class Collector(object):
         self.max_procs = config['exporter']['max_procs'] if 'max_procs' in config['exporter'] else 2
         self.max_threads_per_proc = config['exporter']['max_threads_per_proc'] if 'max_threads_per_proc' \
                                                                                   in config['exporter'] else 40
+        self.enable_name_cache = config['exporter']['enable_name_cache'] if 'enable_name_cache' in config['exporter'] else True
+        self.force_name_resolution = config['exporter']['force_name_resolution'] \
+                                    if 'force_name_resolution' in config['exporter'] else False
         self.filesystems = config['cluster']['filesystems']
 
         self.cluster = cluster_obj
@@ -57,24 +63,20 @@ class Collector(object):
         self.snapViewId = None
         self.inodeId = None
         self.inodeContext = None
+        self.get_path_integrated = None
 
-        # populate the name cache on startup
-        #log.info("Collecting...")
-        #self.collect()
-        #log.info("Collect complete. ")
-
-        # we don't really need this?
-        self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
-        self.background_thread.start()
+        # Background name cache updater... not needed if we're not caching names
+        if self.enable_name_cache:
+            log.info("enable name cache")
+            self.background_thread = threading.Thread(target=self._background_name_updater, daemon=True)
+            self.background_thread.start()
 
 
     def collect(self):
 
-        # lock_starttime = time.time()
         log.info("starting collector...")
         with self._access_lock:  # be thread-safe
             log.info("lock acquired...")
-            # log.info(f"Waited {round(time.time() - lock_starttime, 2)}s to obtain lock")
 
             self.api_stats['num_calls'] = 0
 
@@ -105,7 +107,6 @@ class Collector(object):
                     sys.exit(1)
                 except Exception as exc:
                     log.critical(f"Error gathering data: {exc}, {traceback.format_exc()}")
-                    # log.critical(traceback.format_exc())
                     return  # raise?
 
             # yield for each metric
@@ -208,8 +209,6 @@ class Collector(object):
                 quota_gauge.add_metric([str(self.cluster), fs, dirname, owner,
                                        soft_limit, hard_limit],
                                        str(round(details[self.totalBytes]/1000/1000/1000,1)) )
-                                        #str(round(details[self.softLimitBytes]/1000/1000/1000,1)),
-                                        #str(round(details[self.hardLimitBytes]/1000/1000/1000,1))],
                 if (not self.new_api and details[self.softLimitBytes] <= details[self.hardLimitBytes]) or \
                                     self.new_api and details[self.softLimitBytes] is not None:
                     soft_gauge.add_metric([str(self.cluster), fs, dirname, owner],
@@ -312,15 +311,17 @@ class Collector(object):
         start_time = time.time()
         self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
 
-        while len(quotas) > 0 or first_time:
+        # nextCookie == MAX_U64 means there are no more quotas to fetch for this filesystem
+        while nextCookie != MAX_U64 and (len(quotas) > 0 or first_time):
             self.api_stats['num_calls'] += 1
             first_time = False
             this_call_start = time.time()
 
             parms = {"fs_name": fs_name, "start_cookie": nextCookie }
-            if self.get_path_integrated:
-                parms['get_path'] = True
+            if self.get_path_integrated and self.force_name_resolution:
+                parms['get_path'] = False    # default is True, so no need to specify it if True
 
+            log.debug(f"{parms}")
             try:
                 result = self.cluster.call_api(method=self.method, parms=parms)
             except Exception as exc:
@@ -338,14 +339,24 @@ class Collector(object):
                     all_quotas[quota['quota_id']] = quota # old API format
             log.debug(f"number of quotas returned is {len(quotas)}")
 
-        log.info(f"ET for filesystem '{fs_name}': to collect quotas: {round(time.time() - start_time, 2)}s; total quotas is {len(all_quotas)}")
+        log.info(f"ET for filesystem '{fs_name}': to collect quotas: {round(time.time() - start_time, 2)}s;" +
+                                                f" total quotas is {len(all_quotas)}")
+
+        if len(all_quotas) > 0:
+            firstkey = next(iter(all_quotas))
+            if 'path' in all_quotas[firstkey]:
+                log.info(f"The first quota has a path, and that path is '{all_quotas[firstkey]['path']}'")
+            else:
+                log.info(f"The first quota does not have a path")
+        else:
+            log.info(f"No quotas found")
 
         quotas_to_return = dict()
-        if self.new_api:
+        if self.new_api and not self.enable_name_cache and not self.force_name_resolution:
             for quota_id, quota_details in all_quotas.items():
                 if not self.exceeded_only or (self.exceeded_only and
-                                              (quota_details[self.totalBytes] > quota_details[self.softLimitBytes] or
-                                               quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
+                                          (quota_details[self.totalBytes] > quota_details[self.softLimitBytes] or
+                                           quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
                     quotas_to_return[quota_id] = quota_details
         else:
             # Get list of hosts
@@ -362,22 +373,30 @@ class Collector(object):
                                                quota_details[self.totalBytes] > quota_details[self.hardLimitBytes])):
 
                     # is it in our cache?
-                    if (fs_name in self.quotas_last and quota_id in self.quotas_last[fs_name] and
-                            'path' in self.quotas_last[fs_name][quota_id]):
+                    if (self.enable_name_cache and
+                                       (fs_name in self.quotas_last and quota_id in
+                                       self.quotas_last[fs_name] and 'path' in self.quotas_last[fs_name][quota_id])):
                         # update the path we last used for this quota
                         quota_details['path'] = self.quotas_last[fs_name][quota_id]['path']
-                        quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
+                        if 'last_update_time' in self.quotas_last[fs_name][quota_id]:
+                            quota_details['last_update_time'] = self.quotas_last[fs_name][quota_id]['last_update_time']
+                        else:
+                            quota_details['last_update_time'] = time.time() - random.randint(0,60*60*12)
                         # log.info(f"{quota_details['path']} found in cache")
                         quotas_to_return[quota_id] = quota_details
                     else:
+                        # not in cache, so go resolve the name with the cluster
                         # make a map so we can correlate the path and the quota easily
-                        map_key = (quota_details.get(self.inodeId), quota_details.get(self.snapViewId))
-                        self.quota_map[map_key] = quota_id
-                        parms = {'inodeContext': quota_details[self.inodeId], 'snapViewId': quota_details[self.snapViewId]}
-                        # queue up API calls
-                        self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
-                        self.api_stats['num_calls'] += 1
-            # actually execute the API calls
+                        if 'path' not in quota_details or quota_details['path'] is None: # might be in there, if using new API
+                            map_key = (quota_details.get(self.inodeId), quota_details.get(self.snapViewId))
+                            self.quota_map[map_key] = quota_id
+                            parms = {'inodeContext': quota_details[self.inodeId], 'snapViewId': quota_details[self.snapViewId]}
+                            # queue up API calls
+                            self.asyncobj.submit(self.circular_host_list.next(), 'filesystem_resolve_inode', parms)
+                            self.api_stats['num_calls'] += 1
+                        elif self.enable_name_cache:
+                            quota_details['last_update_time'] = time.time() - random.randint(0, 60 * 60 * 12)
+            # actually execute the API calls (if any, and in parallel)
             timestamp = time.time()
             namecount = 0
             for nameobj in self.asyncobj.wait():
