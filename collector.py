@@ -310,7 +310,12 @@ class Collector(object):
         all_quotas = dict()
         quotas = dict()
         start_time = time.time()
-        self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
+        # NOTE: the async subsystem is only needed for the old-API path (async
+        # inode->path name resolution). Creating it here unconditionally spawned
+        # subprocesses on every scrape for every filesystem that were never
+        # wait()'d/shut down on the new-API path, leaking daemon processes until
+        # OOM. Create it lazily only where it's actually used (below).
+        self.asyncobj = None
 
         while len(quotas) > 0 or first_time:
             self.api_stats['num_calls'] += 1
@@ -351,6 +356,9 @@ class Collector(object):
             # Get list of hosts
             self.hostlist = self.fetch_hostlist()
             self.circular_host_list = circular_list(inputlist=self.hostlist)
+
+            # old API needs async inode->path name resolution
+            self.asyncobj = Async(self.cluster, self.max_procs, self.max_threads_per_proc)
 
             self.quota_map = dict()
 

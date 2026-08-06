@@ -280,10 +280,27 @@ class Async():
 
     # kill the slave processes
     def __del__(self):
-        #for slave in self.slaves:
-        #    slave.submit(die_mf)
-        #    slave.proc.join(5.0)    # wait for it to die (proc join)
-        del self.outputq
+        # An Async spawns subprocesses as soon as it's constructed, so if the
+        # caller never gets to wait() (early return, exception, or just doesn't
+        # use it) we still need to shut the children down here - otherwise they
+        # leak as orphaned daemon processes.
+        for slave in getattr(self, "slaves", []):
+            try:
+                if slave.proc.is_alive():
+                    slave.proc.kill()
+                    slave.proc.join()
+            except Exception:
+                pass    # proc may already be closed/reaped
+            try:
+                slave.inputq.close()
+                slave.inputq.join_thread()
+            except Exception:
+                pass
+        try:
+            self.outputq.close()
+            self.outputq.join_thread()
+        except Exception:
+            pass
 
     # submit a job
     def submit(self, hostname, method, parms):
@@ -374,6 +391,23 @@ class Async():
                     slave.proc.terminate()  # can't be rude
                 else:
                     slave.proc.kill()   # we would rather be rude about it
+
+            # actually reap the process and release its queue, otherwise we leak
+            # the process table entry and the queue's fds/semaphores
+            slave.proc.join()   # after kill(), join to reap it
+            try:
+                slave.inputq.close()
+                slave.inputq.join_thread()
+            except Exception as exc:
+                log.debug(f"error closing inputq for {slave}: {exc}")
+            if sys.version_info.minor >= 7:
+                slave.proc.close()  # release the Process object itself
+
+        try:
+            self.outputq.close()
+            self.outputq.join_thread()
+        except Exception as exc:
+            log.debug(f"error closing outputq: {exc}")
 
         # queue should be empty now
         return
